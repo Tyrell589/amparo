@@ -33,11 +33,11 @@ const adminAuth = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
     
     // Get user from database to check current status
-    const db = require('../config/database');
-    const pool = await db.getConnection();
+    const { getPool, sql } = require('../config/database');
+    const pool = getPool();
     
     const userResult = await pool.request()
-      .input('IdUsuario', db.Int, decoded.userId)
+      .input('IdUsuario', sql.Int, decoded.userId)
       .query(`
         SELECT u.*, p.nombre as perfil_nombre 
         FROM Usuario u 

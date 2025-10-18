@@ -1,0 +1,98 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                     PJF_AMPAROS DATABASE STRUCTURE                           ║
+║                     Amparo Legal Management System                           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+📊 OVERVIEW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Total Tables: 17
+  Total Columns: 124
+  Stored Procedures: 8
+  Foreign Key Relations: 13+
+
+📁 ALL TABLES (17)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CATALOG TABLES (6):
+  1. Cat_Perfil                    - User profiles/roles (4 records)
+  2. Cat_Juzgados                  - Judicial courts (4 records)
+  3. Cat_Distritos                 - Judicial districts (2 records)
+  4. Cat_TipoAsunto                - Case types (3 records)
+  5. Cat_TipoCuaderno              - Notebook types (3 records)
+  6. Cat_ClasificacionArchivo      - File classifications (5 records)
+
+CORE BUSINESS TABLES (5):
+  7. Usuarios                      - System users (0 records)
+  8. Expediente                    - Amparo case files (0 records)
+  9. PartesExpediente              - Case parties/participants (0 records)
+  10. Notificacion                 - Legal notifications (0 records)
+  11. AmparosPJ                    - Amparo cases from judiciary (0 records)
+
+DOCUMENT MANAGEMENT (4):
+  12. DocumentosNotificacion       - Notification documents (0 records)
+  13. DocumentosPromocion          - Promotion documents (0 records)
+  14. DetalleActosReclamados       - Claimed acts details (0 records)
+  15. Promocion                    - Legal promotions (0 records)
+
+INTEGRATION TABLES (2):
+  16. ICOIJ_Solicitud              - Inter-institutional requests (0 records)
+  17. ICOIJ_FIRMA_CAT_AC           - Digital signature CAs (0 records)
+
+🔑 KEY RELATIONSHIPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Usuarios → Cat_Perfil
+  Usuarios → Cat_Juzgados
+  
+  Cat_Juzgados → Cat_Distritos
+  
+  PartesExpediente → Expediente
+  DetalleActosReclamados → PartesExpediente
+  
+  Notificacion → Expediente
+  Notificacion → Cat_Juzgados
+  Notificacion → Cat_TipoAsunto
+  
+  DocumentosNotificacion → Notificacion
+  DocumentosNotificacion → Cat_ClasificacionArchivo
+  
+  AmparosPJ → Expediente
+  AmparosPJ → Notificacion
+  
+  Promocion → AmparosPJ
+  DocumentosPromocion → Promocion
+  
+  ICOIJ_Solicitud → Notificacion
+
+⚙️  STORED PROCEDURES (8)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. pcConsultaAC                           - Query certificate authority
+  2. stp_Existe_Organo_impartidor_justicia  - Check organ exists
+  3. stp_ExisteNotificacion                 - Check notification exists
+  4. stp_ExtExpediente_Agregar              - Add/get expediente
+  5. stp_ExtPartesExpediente_Agregar        - Add/get case party
+  6. stp_ExtDetalleActosReclamados_Agregar  - Add/get claimed acts
+  7. stp_ExtNotificacion_Agregar            - Add notification
+  8. stp_ExtDocumentosNotificacion_Agregar  - Add/get notification doc
+
+📌 IMPORTANT FIELDS ACROSS TABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Soft Delete:      Eliminado (bit) - 0=active, 1=deleted
+  Status:           Estado (char)   - 'A'=active, 'I'=inactive
+  Electronic Files: expedienteElectronico, urlEE, FileBase64
+  Digital Sig:      Firmado, FechaFirmado, Pkcs7Base64, HashDocumentoOriginal
+
+🎯 WORKFLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. User creates/receives an Expediente (case)
+  2. PartesExpediente added (parties involved)
+  3. DetalleActosReclamados added (claimed acts per party)
+  4. Notificacion sent to judicial organ
+  5. DocumentosNotificacion attached to notification
+  6. AmparosPJ created when case received from judiciary
+  7. Promocion created for legal submissions
+  8. DocumentosPromocion attached to promotions
+

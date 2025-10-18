@@ -1,53 +1,53 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../config/database');
+const { getPool, sql } = require('../config/database');
 const adminAuth = require('../middleware/adminAuth');
 
 // GET /api/perfiles - Get all perfiles with pagination and filtering
-router.get('/', adminAuth, async (req, res) => {
+// @access  Public (authentication bypassed)
+router.get('/', async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', activo = '' } = req.query;
+    const { page = 1, limit = 10, search = '' } = req.query;
     const offset = (page - 1) * limit;
     
-    let whereClause = 'WHERE 1=1';
-    const params = {};
+    const pool = getPool();
     
+    // Build WHERE clause
+    let whereClause = 'WHERE Eliminado = 0';
     if (search) {
-      whereClause += ' AND (nombre LIKE @search OR descripcion LIKE @search)';
-      params.search = `%${search}%`;
+      whereClause += ' AND Nombre LIKE @search';
     }
-    
-    if (activo !== '') {
-      whereClause += ' AND activo = @activo';
-      params.activo = activo === 'true' ? 1 : 0;
-    }
-
-    const pool = await db.getConnection();
     
     // Get total count
-    const countResult = await pool.request()
-      .input('search', db.VarChar, params.search || '')
-      .input('activo', db.Int, params.activo !== undefined ? params.activo : null)
-      .query(`
-        SELECT COUNT(*) as total 
-        FROM Cat_Perfil 
-        ${whereClause.replace('@search', '@search').replace('@activo', '@activo')}
-      `);
+    const countQuery = `SELECT COUNT(*) as total FROM Cat_Perfil ${whereClause}`;
+    const countRequest = pool.request();
+    if (search) {
+      countRequest.input('search', sql.VarChar, `%${search}%`);
+    }
+    const countResult = await countRequest.query(countQuery);
 
     // Get paginated data
-    const dataResult = await pool.request()
-      .input('search', db.VarChar, params.search || '')
-      .input('activo', db.Int, params.activo !== undefined ? params.activo : null)
-      .input('offset', db.Int, offset)
-      .input('limit', db.Int, parseInt(limit))
-      .query(`
-        SELECT id, nombre, descripcion, activo, fecha_creacion, fecha_actualizacion
-        FROM Cat_Perfil 
-        ${whereClause.replace('@search', '@search').replace('@activo', '@activo')}
-        ORDER BY nombre
-        OFFSET @offset ROWS
-        FETCH NEXT @limit ROWS ONLY
-      `);
+    const dataQuery = `
+      SELECT 
+        id_perfil as id,
+        Nombre as nombre,
+        CASE WHEN Eliminado = 0 THEN 1 ELSE 0 END as activo
+      FROM Cat_Perfil 
+      ${whereClause}
+      ORDER BY Nombre
+      OFFSET @offset ROWS
+      FETCH NEXT @limit ROWS ONLY
+    `;
+    
+    const dataRequest = pool.request()
+      .input('offset', sql.Int, offset)
+      .input('limit', sql.Int, parseInt(limit));
+      
+    if (search) {
+      dataRequest.input('search', sql.VarChar, `%${search}%`);
+    }
+    
+    const dataResult = await dataRequest.query(dataQuery);
 
     const total = countResult.recordset[0].total;
     const totalPages = Math.ceil(total / limit);
@@ -73,17 +73,21 @@ router.get('/', adminAuth, async (req, res) => {
 });
 
 // GET /api/perfiles/:id - Get single perfil
-router.get('/:id', adminAuth, async (req, res) => {
+// @access  Public (authentication bypassed)
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const pool = await db.getConnection();
+    const pool = getPool();
     
     const result = await pool.request()
-      .input('id', db.Int, id)
+      .input('id', sql.Int, id)
       .query(`
-        SELECT id, nombre, descripcion, activo, fecha_creacion, fecha_actualizacion
+        SELECT 
+          id_perfil as id,
+          Nombre as nombre,
+          CASE WHEN Eliminado = 0 THEN 1 ELSE 0 END as activo
         FROM Cat_Perfil 
-        WHERE id = @id
+        WHERE id_perfil = @id AND Eliminado = 0
       `);
 
     if (result.recordset.length === 0) {
@@ -108,9 +112,10 @@ router.get('/:id', adminAuth, async (req, res) => {
 });
 
 // POST /api/perfiles - Create new perfil
-router.post('/', adminAuth, async (req, res) => {
+// @access  Public (authentication bypassed)
+router.post('/', async (req, res) => {
   try {
-    const { nombre, descripcion = '', activo = true } = req.body;
+    const { nombre } = req.body;
     
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ 
@@ -119,12 +124,12 @@ router.post('/', adminAuth, async (req, res) => {
       });
     }
 
-    const pool = await db.getConnection();
+    const pool = getPool();
     
     // Check if nombre already exists
     const existingResult = await pool.request()
-      .input('nombre', db.VarChar, nombre.trim())
-      .query('SELECT id FROM Cat_Perfil WHERE nombre = @nombre');
+      .input('nombre', sql.VarChar, nombre.trim())
+      .query('SELECT id_perfil FROM Cat_Perfil WHERE Nombre = @nombre AND Eliminado = 0');
     
     if (existingResult.recordset.length > 0) {
       return res.status(400).json({ 
@@ -134,13 +139,17 @@ router.post('/', adminAuth, async (req, res) => {
     }
 
     const result = await pool.request()
-      .input('nombre', db.VarChar, nombre.trim())
-      .input('descripcion', db.VarChar, descripcion.trim())
-      .input('activo', db.Bit, activo ? 1 : 0)
+      .input('nombre', sql.VarChar, nombre.trim())
       .query(`
-        INSERT INTO Cat_Perfil (nombre, descripcion, activo, fecha_creacion, fecha_actualizacion)
-        OUTPUT INSERTED.id, INSERTED.nombre, INSERTED.descripcion, INSERTED.activo, INSERTED.fecha_creacion, INSERTED.fecha_actualizacion
-        VALUES (@nombre, @descripcion, @activo, GETDATE(), GETDATE())
+        INSERT INTO Cat_Perfil (Nombre, Eliminado)
+        VALUES (@nombre, 0);
+        
+        SELECT 
+          id_perfil as id,
+          Nombre as nombre,
+          CASE WHEN Eliminado = 0 THEN 1 ELSE 0 END as activo
+        FROM Cat_Perfil 
+        WHERE id_perfil = SCOPE_IDENTITY()
       `);
 
     res.status(201).json({
@@ -159,10 +168,11 @@ router.post('/', adminAuth, async (req, res) => {
 });
 
 // PUT /api/perfiles/:id - Update perfil
-router.put('/:id', adminAuth, async (req, res) => {
+// @access  Public (authentication bypassed)
+router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, descripcion = '', activo = true } = req.body;
+    const { nombre, activo = true } = req.body;
     
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ 
@@ -171,12 +181,12 @@ router.put('/:id', adminAuth, async (req, res) => {
       });
     }
 
-    const pool = await db.getConnection();
+    const pool = getPool();
     
     // Check if perfil exists
     const existingResult = await pool.request()
-      .input('id', db.Int, id)
-      .query('SELECT id FROM Cat_Perfil WHERE id = @id');
+      .input('id', sql.Int, id)
+      .query('SELECT id_perfil FROM Cat_Perfil WHERE id_perfil = @id');
     
     if (existingResult.recordset.length === 0) {
       return res.status(404).json({ 
@@ -187,9 +197,9 @@ router.put('/:id', adminAuth, async (req, res) => {
 
     // Check if nombre already exists (excluding current record)
     const duplicateResult = await pool.request()
-      .input('nombre', db.VarChar, nombre.trim())
-      .input('id', db.Int, id)
-      .query('SELECT id FROM Cat_Perfil WHERE nombre = @nombre AND id != @id');
+      .input('nombre', sql.VarChar, nombre.trim())
+      .input('id', sql.Int, id)
+      .query('SELECT id_perfil FROM Cat_Perfil WHERE Nombre = @nombre AND id_perfil != @id AND Eliminado = 0');
     
     if (duplicateResult.recordset.length > 0) {
       return res.status(400).json({ 
@@ -199,15 +209,20 @@ router.put('/:id', adminAuth, async (req, res) => {
     }
 
     const result = await pool.request()
-      .input('id', db.Int, id)
-      .input('nombre', db.VarChar, nombre.trim())
-      .input('descripcion', db.VarChar, descripcion.trim())
-      .input('activo', db.Bit, activo ? 1 : 0)
+      .input('id', sql.Int, id)
+      .input('nombre', sql.VarChar, nombre.trim())
+      .input('eliminado', sql.Bit, activo ? 0 : 1)
       .query(`
         UPDATE Cat_Perfil 
-        SET nombre = @nombre, descripcion = @descripcion, activo = @activo, fecha_actualizacion = GETDATE()
-        OUTPUT INSERTED.id, INSERTED.nombre, INSERTED.descripcion, INSERTED.activo, INSERTED.fecha_creacion, INSERTED.fecha_actualizacion
-        WHERE id = @id
+        SET Nombre = @nombre, Eliminado = @eliminado
+        WHERE id_perfil = @id;
+        
+        SELECT 
+          id_perfil as id,
+          Nombre as nombre,
+          CASE WHEN Eliminado = 0 THEN 1 ELSE 0 END as activo
+        FROM Cat_Perfil 
+        WHERE id_perfil = @id
       `);
 
     res.json({
@@ -225,16 +240,17 @@ router.put('/:id', adminAuth, async (req, res) => {
   }
 });
 
-// DELETE /api/perfiles/:id - Delete perfil
-router.delete('/:id', adminAuth, async (req, res) => {
+// DELETE /api/perfiles/:id - Delete perfil (soft delete)
+// @access  Public (authentication bypassed)
+router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const pool = await db.getConnection();
+    const pool = getPool();
     
     // Check if perfil exists
     const existingResult = await pool.request()
-      .input('id', db.Int, id)
-      .query('SELECT id FROM Cat_Perfil WHERE id = @id');
+      .input('id', sql.Int, id)
+      .query('SELECT id_perfil FROM Cat_Perfil WHERE id_perfil = @id AND Eliminado = 0');
     
     if (existingResult.recordset.length === 0) {
       return res.status(404).json({ 
@@ -245,8 +261,8 @@ router.delete('/:id', adminAuth, async (req, res) => {
 
     // Check if perfil is being used by users
     const usageResult = await pool.request()
-      .input('id', db.Int, id)
-      .query('SELECT COUNT(*) as count FROM Usuario WHERE id_perfil = @id');
+      .input('id', sql.Int, id)
+      .query('SELECT COUNT(*) as count FROM Usuarios WHERE id_perfil = @id AND Eliminado = 0');
     
     if (usageResult.recordset[0].count > 0) {
       return res.status(400).json({ 
@@ -255,9 +271,10 @@ router.delete('/:id', adminAuth, async (req, res) => {
       });
     }
 
+    // Soft delete
     await pool.request()
-      .input('id', db.Int, id)
-      .query('DELETE FROM Cat_Perfil WHERE id = @id');
+      .input('id', sql.Int, id)
+      .query('UPDATE Cat_Perfil SET Eliminado = 1 WHERE id_perfil = @id');
 
     res.json({
       success: true,

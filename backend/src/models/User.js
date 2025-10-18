@@ -41,7 +41,7 @@ class User {
     request.input('Eliminado', sql.Bit, 0);
 
     const result = await request.query(`
-      INSERT INTO Usuarios (Nombre, APaterno, AMaterno, Usuario, Clave, Correo, Telefono, Extension, id_perfil, organo_impartidor_justicia, Estado, Eliminado)
+      INSERT INTO Usuarios (Nombre, APaterno, AMaterno, Usuario, Clave, Correo, Telefono, Extensión, id_perfil, organo_impartidor_justicia, Estado, Eliminado)
       OUTPUT INSERTED.IdUsuario
       VALUES (@Nombre, @APaterno, @AMaterno, @Usuario, @Clave, @Correo, @Telefono, @Extension, @id_perfil, @organo_impartidor_justicia, @Estado, @Eliminado)
     `);
@@ -56,7 +56,7 @@ class User {
     request.input('identifier', sql.NVarChar(100), identifier);
 
     const result = await request.query(`
-      SELECT IdUsuario, Nombre, APaterno, AMaterno, Usuario, Clave, Correo, Telefono, Extension, 
+      SELECT IdUsuario, Nombre, APaterno, AMaterno, Usuario, Clave, Correo, Telefono, Extensión AS Extension, 
              id_perfil, organo_impartidor_justicia, Estado, Eliminado
       FROM Usuarios 
       WHERE (Usuario = @identifier OR Correo = @identifier) 
@@ -66,17 +66,17 @@ class User {
     return result.recordset[0] || null;
   }
 
-  // Find user by ID
+  // Find user by ID (including inactive users)
   static async findById(id) {
     const pool = getPool();
     const request = pool.request();
     request.input('IdUsuario', sql.Int, id);
 
     const result = await request.query(`
-      SELECT IdUsuario, Nombre, APaterno, AMaterno, Usuario, Correo, Telefono, Extension, 
+      SELECT IdUsuario, Nombre, APaterno, AMaterno, Usuario, Correo, Telefono, Extensión AS Extension, 
              id_perfil, organo_impartidor_justicia, Estado, Eliminado
       FROM Usuarios 
-      WHERE IdUsuario = @IdUsuario AND Estado = 'A' AND Eliminado = 0
+      WHERE IdUsuario = @IdUsuario AND Eliminado = 0
     `);
 
     return result.recordset[0] || null;

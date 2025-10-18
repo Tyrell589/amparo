@@ -1,12 +1,12 @@
 const config = {
-  user: 'sa',
-  password: 'StrongPass123!',
-  server: '127.0.0.1',      // Force IPv4
+  user: 'SA',
+  password: 'Basketball@0615', // your SA password
+  server: 'localhost',          // since SQL Server is on the same host
   port: 1433,
-  database: 'PJF_Amparos',
+  database: 'PJF_Amparos',      // replace with your database
   options: {
-    encrypt: false,
-    trustServerCertificate: true,
+    encrypt: false,              // true if using Azure
+    trustServerCertificate: true, // required for local dev
     connectionTimeout: 30000,
     requestTimeout: 30000
   }

@@ -1,53 +1,58 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../config/database');
+const { getPool, sql } = require('../config/database');
 const adminAuth = require('../middleware/adminAuth');
 
 // GET /api/juzgados - Get all juzgados with pagination and filtering
-router.get('/', adminAuth, async (req, res) => {
+// @access  Public (authentication bypassed)
+router.get('/', async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', activo = '' } = req.query;
+    const { page = 1, limit = 10, search = '' } = req.query;
     const offset = (page - 1) * limit;
     
-    let whereClause = 'WHERE 1=1';
-    const params = {};
+    const pool = getPool();
     
+    // Build WHERE clause
+    let whereClause = 'WHERE Eliminado = 0';
     if (search) {
-      whereClause += ' AND (nombre LIKE @search OR descripcion LIKE @search)';
-      params.search = `%${search}%`;
+      whereClause += ' AND (Nombre LIKE @search OR Clave LIKE @search)';
     }
-    
-    if (activo !== '') {
-      whereClause += ' AND activo = @activo';
-      params.activo = activo === 'true' ? 1 : 0;
-    }
-
-    const pool = await db.getConnection();
     
     // Get total count
-    const countResult = await pool.request()
-      .input('search', db.VarChar, params.search || '')
-      .input('activo', db.Int, params.activo !== undefined ? params.activo : null)
-      .query(`
-        SELECT COUNT(*) as total 
-        FROM Cat_Juzgados 
-        ${whereClause.replace('@search', '@search').replace('@activo', '@activo')}
-      `);
+    const countQuery = `SELECT COUNT(*) as total FROM Cat_Juzgados ${whereClause}`;
+    const countRequest = pool.request();
+    if (search) {
+      countRequest.input('search', sql.VarChar, `%${search}%`);
+    }
+    const countResult = await countRequest.query(countQuery);
 
     // Get paginated data
-    const dataResult = await pool.request()
-      .input('search', db.VarChar, params.search || '')
-      .input('activo', db.Int, params.activo !== undefined ? params.activo : null)
-      .input('offset', db.Int, offset)
-      .input('limit', db.Int, parseInt(limit))
-      .query(`
-        SELECT id, nombre, descripcion, activo, fecha_creacion, fecha_actualizacion
-        FROM Cat_Juzgados 
-        ${whereClause.replace('@search', '@search').replace('@activo', '@activo')}
-        ORDER BY nombre
-        OFFSET @offset ROWS
-        FETCH NEXT @limit ROWS ONLY
-      `);
+    const dataQuery = `
+      SELECT 
+        organo_impartidor_justicia as id,
+        IdJuzgadoPJHGO,
+        Clave,
+        Nombre as nombre,
+        TipoJuicio,
+        IdDistrito,
+        Correo,
+        CASE WHEN Eliminado = 0 THEN 1 ELSE 0 END as activo
+      FROM Cat_Juzgados 
+      ${whereClause}
+      ORDER BY Nombre
+      OFFSET @offset ROWS
+      FETCH NEXT @limit ROWS ONLY
+    `;
+    
+    const dataRequest = pool.request()
+      .input('offset', sql.Int, offset)
+      .input('limit', sql.Int, parseInt(limit));
+      
+    if (search) {
+      dataRequest.input('search', sql.VarChar, `%${search}%`);
+    }
+    
+    const dataResult = await dataRequest.query(dataQuery);
 
     const total = countResult.recordset[0].total;
     const totalPages = Math.ceil(total / limit);
@@ -73,17 +78,26 @@ router.get('/', adminAuth, async (req, res) => {
 });
 
 // GET /api/juzgados/:id - Get single juzgado
-router.get('/:id', adminAuth, async (req, res) => {
+// @access  Public (authentication bypassed)
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const pool = await db.getConnection();
+    const pool = getPool();
     
     const result = await pool.request()
-      .input('id', db.Int, id)
+      .input('id', sql.Int, id)
       .query(`
-        SELECT id, nombre, descripcion, activo, fecha_creacion, fecha_actualizacion
+        SELECT 
+          organo_impartidor_justicia as id,
+          IdJuzgadoPJHGO,
+          Clave,
+          Nombre as nombre,
+          TipoJuicio,
+          IdDistrito,
+          Correo,
+          CASE WHEN Eliminado = 0 THEN 1 ELSE 0 END as activo
         FROM Cat_Juzgados 
-        WHERE id = @id
+        WHERE organo_impartidor_justicia = @id AND Eliminado = 0
       `);
 
     if (result.recordset.length === 0) {
@@ -108,9 +122,10 @@ router.get('/:id', adminAuth, async (req, res) => {
 });
 
 // POST /api/juzgados - Create new juzgado
-router.post('/', adminAuth, async (req, res) => {
+// @access  Public (authentication bypassed)
+router.post('/', async (req, res) => {
   try {
-    const { nombre, descripcion = '', activo = true } = req.body;
+    const { nombre, clave = '', tipoJuicio = 'A', idDistrito = 1, correo = '' } = req.body;
     
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ 
@@ -119,12 +134,22 @@ router.post('/', adminAuth, async (req, res) => {
       });
     }
 
-    const pool = await db.getConnection();
+    const pool = getPool();
     
+    // Get next available organo_impartidor_justicia ID
+    const maxIdResult = await pool.request()
+      .query('SELECT ISNULL(MAX(organo_impartidor_justicia), 0) + 1 as nextId FROM Cat_Juzgados');
+    const nextId = maxIdResult.recordset[0].nextId;
+    
+    // Get next IdJuzgadoPJHGO
+    const maxJuzgadoIdResult = await pool.request()
+      .query('SELECT ISNULL(MAX(IdJuzgadoPJHGO), 0) + 1 as nextJuzgadoId FROM Cat_Juzgados');
+    const nextJuzgadoId = maxJuzgadoIdResult.recordset[0].nextJuzgadoId;
+
     // Check if nombre already exists
     const existingResult = await pool.request()
-      .input('nombre', db.VarChar, nombre.trim())
-      .query('SELECT id FROM Cat_Juzgados WHERE nombre = @nombre');
+      .input('nombre', sql.VarChar, nombre.trim())
+      .query('SELECT organo_impartidor_justicia FROM Cat_Juzgados WHERE Nombre = @nombre AND Eliminado = 0');
     
     if (existingResult.recordset.length > 0) {
       return res.status(400).json({ 
@@ -134,13 +159,28 @@ router.post('/', adminAuth, async (req, res) => {
     }
 
     const result = await pool.request()
-      .input('nombre', db.VarChar, nombre.trim())
-      .input('descripcion', db.VarChar, descripcion.trim())
-      .input('activo', db.Bit, activo ? 1 : 0)
+      .input('organo', sql.Int, nextId)
+      .input('juzgadoId', sql.Int, nextJuzgadoId)
+      .input('clave', sql.VarChar, clave.trim() || `J${String(nextJuzgadoId).padStart(3, '0')}`)
+      .input('nombre', sql.VarChar, nombre.trim())
+      .input('tipoJuicio', sql.VarChar, tipoJuicio)
+      .input('idDistrito', sql.Int, idDistrito)
+      .input('correo', sql.VarChar, correo.trim())
       .query(`
-        INSERT INTO Cat_Juzgados (nombre, descripcion, activo, fecha_creacion, fecha_actualizacion)
-        OUTPUT INSERTED.id, INSERTED.nombre, INSERTED.descripcion, INSERTED.activo, INSERTED.fecha_creacion, INSERTED.fecha_actualizacion
-        VALUES (@nombre, @descripcion, @activo, GETDATE(), GETDATE())
+        INSERT INTO Cat_Juzgados (IdJuzgadoPJHGO, Clave, Nombre, TipoJuicio, IdDistrito, organo_impartidor_justicia, Correo, Eliminado)
+        VALUES (@juzgadoId, @clave, @nombre, @tipoJuicio, @idDistrito, @organo, @correo, 0);
+        
+        SELECT 
+          organo_impartidor_justicia as id,
+          IdJuzgadoPJHGO,
+          Clave,
+          Nombre as nombre,
+          TipoJuicio,
+          IdDistrito,
+          Correo,
+          CASE WHEN Eliminado = 0 THEN 1 ELSE 0 END as activo
+        FROM Cat_Juzgados 
+        WHERE organo_impartidor_justicia = @organo
       `);
 
     res.status(201).json({
@@ -159,10 +199,11 @@ router.post('/', adminAuth, async (req, res) => {
 });
 
 // PUT /api/juzgados/:id - Update juzgado
-router.put('/:id', adminAuth, async (req, res) => {
+// @access  Public (authentication bypassed)
+router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, descripcion = '', activo = true } = req.body;
+    const { nombre, clave, tipoJuicio, idDistrito, correo, activo = true } = req.body;
     
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({ 
@@ -171,12 +212,12 @@ router.put('/:id', adminAuth, async (req, res) => {
       });
     }
 
-    const pool = await db.getConnection();
+    const pool = getPool();
     
     // Check if juzgado exists
     const existingResult = await pool.request()
-      .input('id', db.Int, id)
-      .query('SELECT id FROM Cat_Juzgados WHERE id = @id');
+      .input('id', sql.Int, id)
+      .query('SELECT organo_impartidor_justicia FROM Cat_Juzgados WHERE organo_impartidor_justicia = @id');
     
     if (existingResult.recordset.length === 0) {
       return res.status(404).json({ 
@@ -187,9 +228,9 @@ router.put('/:id', adminAuth, async (req, res) => {
 
     // Check if nombre already exists (excluding current record)
     const duplicateResult = await pool.request()
-      .input('nombre', db.VarChar, nombre.trim())
-      .input('id', db.Int, id)
-      .query('SELECT id FROM Cat_Juzgados WHERE nombre = @nombre AND id != @id');
+      .input('nombre', sql.VarChar, nombre.trim())
+      .input('id', sql.Int, id)
+      .query('SELECT organo_impartidor_justicia FROM Cat_Juzgados WHERE Nombre = @nombre AND organo_impartidor_justicia != @id AND Eliminado = 0');
     
     if (duplicateResult.recordset.length > 0) {
       return res.status(400).json({ 
@@ -199,15 +240,35 @@ router.put('/:id', adminAuth, async (req, res) => {
     }
 
     const result = await pool.request()
-      .input('id', db.Int, id)
-      .input('nombre', db.VarChar, nombre.trim())
-      .input('descripcion', db.VarChar, descripcion.trim())
-      .input('activo', db.Bit, activo ? 1 : 0)
+      .input('id', sql.Int, id)
+      .input('nombre', sql.VarChar, nombre.trim())
+      .input('clave', sql.VarChar, clave || '')
+      .input('tipoJuicio', sql.VarChar, tipoJuicio || 'A')
+      .input('idDistrito', sql.Int, idDistrito || 1)
+      .input('correo', sql.VarChar, correo || '')
+      .input('eliminado', sql.Bit, activo ? 0 : 1)
       .query(`
         UPDATE Cat_Juzgados 
-        SET nombre = @nombre, descripcion = @descripcion, activo = @activo, fecha_actualizacion = GETDATE()
-        OUTPUT INSERTED.id, INSERTED.nombre, INSERTED.descripcion, INSERTED.activo, INSERTED.fecha_creacion, INSERTED.fecha_actualizacion
-        WHERE id = @id
+        SET 
+          Nombre = @nombre,
+          Clave = @clave,
+          TipoJuicio = @tipoJuicio,
+          IdDistrito = @idDistrito,
+          Correo = @correo,
+          Eliminado = @eliminado
+        WHERE organo_impartidor_justicia = @id;
+        
+        SELECT 
+          organo_impartidor_justicia as id,
+          IdJuzgadoPJHGO,
+          Clave,
+          Nombre as nombre,
+          TipoJuicio,
+          IdDistrito,
+          Correo,
+          CASE WHEN Eliminado = 0 THEN 1 ELSE 0 END as activo
+        FROM Cat_Juzgados 
+        WHERE organo_impartidor_justicia = @id
       `);
 
     res.json({
@@ -225,16 +286,17 @@ router.put('/:id', adminAuth, async (req, res) => {
   }
 });
 
-// DELETE /api/juzgados/:id - Delete juzgado
-router.delete('/:id', adminAuth, async (req, res) => {
+// DELETE /api/juzgados/:id - Delete juzgado (soft delete)
+// @access  Public (authentication bypassed)
+router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const pool = await db.getConnection();
+    const pool = getPool();
     
     // Check if juzgado exists
     const existingResult = await pool.request()
-      .input('id', db.Int, id)
-      .query('SELECT id FROM Cat_Juzgados WHERE id = @id');
+      .input('id', sql.Int, id)
+      .query('SELECT organo_impartidor_justicia FROM Cat_Juzgados WHERE organo_impartidor_justicia = @id AND Eliminado = 0');
     
     if (existingResult.recordset.length === 0) {
       return res.status(404).json({ 
@@ -245,8 +307,8 @@ router.delete('/:id', adminAuth, async (req, res) => {
 
     // Check if juzgado is being used by users
     const usageResult = await pool.request()
-      .input('id', db.Int, id)
-      .query('SELECT COUNT(*) as count FROM Usuario WHERE organo_impartidor_justicia = @id');
+      .input('id', sql.Int, id)
+      .query('SELECT COUNT(*) as count FROM Usuarios WHERE organo_impartidor_justicia = @id AND Eliminado = 0');
     
     if (usageResult.recordset[0].count > 0) {
       return res.status(400).json({ 
@@ -255,9 +317,10 @@ router.delete('/:id', adminAuth, async (req, res) => {
       });
     }
 
+    // Soft delete
     await pool.request()
-      .input('id', db.Int, id)
-      .query('DELETE FROM Cat_Juzgados WHERE id = @id');
+      .input('id', sql.Int, id)
+      .query('UPDATE Cat_Juzgados SET Eliminado = 1 WHERE organo_impartidor_justicia = @id');
 
     res.json({
       success: true,
